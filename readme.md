@@ -21,6 +21,9 @@ and install the following dependencies :
     
     ./python3.7m -m pip install --upgrade pip
     ./python3.7m -m pip install onnxruntime
+
+(On Windows you might need to replace `./python3.7m` with `python.exe` in the
+commands above)
     
 By installing `onnxruntime`, be aware of 
 [Microsoft conditions](https://github.com/microsoft/onnxruntime/blob/master/docs/Privacy.md).
@@ -28,7 +31,7 @@ By installing `onnxruntime`, be aware of
 Once dependencies are met,
 [download DeepBump as a ZIP](https://github.com/HugoTini/DeepBump/archive/master.zip). 
 Then in Blender go to _Edit -> Preferences -> Add-ons -> Install_ 
-and select the downloaded ZIP file.
+and select the downloaded ZIP file. Then enable the add-on.
 
 ## Usage
 
