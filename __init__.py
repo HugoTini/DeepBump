@@ -1,5 +1,5 @@
 import bpy
-from bpy.types import (Panel, Menu, Operator, PropertyGroup)
+from bpy.types import (Panel, Operator, PropertyGroup)
 from bpy.props import (EnumProperty, PointerProperty)
 import pathlib
 import os
@@ -12,7 +12,7 @@ if "bpy" in locals():
 bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal maps from image textures',
-    'author': 'TBD',
+    'author': 'Hugo Tini',
     'version': (0, 1, 0),
     'blender': (2, 82, 0),
     'location': 'Node Editor > DeepBump',
