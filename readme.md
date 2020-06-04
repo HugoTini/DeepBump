@@ -19,6 +19,7 @@ bundled Python :
     
 and install the following dependencies :
     
+    ./python3.7m -m ensurepip
     ./python3.7m -m pip install --upgrade pip
     ./python3.7m -m pip install onnxruntime
 
