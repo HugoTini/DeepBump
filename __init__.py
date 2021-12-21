@@ -1,27 +1,74 @@
+bl_info = {
+    'name': 'DeepBump',
+    'description': 'Generates normal maps from image textures',
+    'author': 'Hugo Tini',
+    'version': (2, 0, 0),
+    'blender': (3, 0, 0),
+    'location': 'Node Editor > DeepBump',
+    'category': 'Material',
+    'warning': 'Requires installation of dependencies',
+    'doc_url': 'https://github.com/HugoTini/DeepBump/blob/master/readme.md'
+}
+
+
 import bpy
 from bpy.types import (Panel, Operator, PropertyGroup)
 from bpy.props import (EnumProperty, PointerProperty)
 import pathlib
 import os
+import subprocess
+import sys
+import importlib
+from collections import namedtuple
 
-from . import infer
-if "bpy" in locals():
-    import importlib
-    importlib.reload(infer)
-
-bl_info = {
-    'name': 'DeepBump',
-    'description': 'Generates normal maps from image textures',
-    'author': 'Hugo Tini',
-    'version': (0, 1, 0),
-    'blender': (2, 82, 0),
-    'location': 'Node Editor > DeepBump',
-    'category': 'Material',
-    'warning': 'Extra Python dependencies must be installed first, check the readme.'
-}
 
 # ------------------------------------------------------------------------
-#    Scene Properties
+#    Dependencies management utils
+# ------------------------------------------------------------------------
+
+
+# Python dependencies management helpers from :
+# https://github.com/robertguetzkow/blender-python-examples/tree/master/add_ons/install_dependencies
+Dependency = namedtuple('Dependency', ['module', 'package', 'name'])
+dependencies = (Dependency(module='onnxruntime', package=None, name='ort'),
+                Dependency(module='numpy', package=None, name='np'))
+dependencies_installed = False
+
+
+def import_module(module_name, global_name=None, reload=True):
+    if global_name is None:
+        global_name = module_name
+    if global_name in globals():
+        importlib.reload(globals()[global_name])
+    else:
+        globals()[global_name] = importlib.import_module(module_name)
+
+
+def install_pip():
+    try:
+        # Check if pip is already installed
+        subprocess.run([sys.executable, '-m', 'pip', '--version'], check=True)
+    except subprocess.CalledProcessError:
+        import ensurepip
+        ensurepip.bootstrap()
+        os.environ.pop("PIP_REQ_TRACKER", None)
+
+
+def install_and_import_module(module_name, package_name=None, global_name=None):
+    if package_name is None:
+        package_name = module_name
+    if global_name is None:
+        global_name = module_name
+    # Create a copy of the environment variables and modify them for the subprocess call
+    environ_copy = dict(os.environ)
+    environ_copy['PYTHONNOUSERSITE'] = '1'
+    subprocess.run([sys.executable, '-m', 'pip', 'install', package_name], check=True, env=environ_copy)
+    # The installation succeeded, attempt to import the module again
+    import_module(module_name, global_name)
+
+
+# ------------------------------------------------------------------------
+#    Scene properties
 # ------------------------------------------------------------------------
 
 
@@ -35,120 +82,115 @@ class DeepBumpProperties(PropertyGroup):
                ('BIG', 'Big', 'Big overlap between tiles.')]
     )
 
+
 # ------------------------------------------------------------------------
 #    Operators
 # ------------------------------------------------------------------------
 
 
-class WM_OT_DeepBumpOperator(Operator):
-    '''Generates a normal map from an image. Settings in DeepBump panel (Node Editor)'''
-
+class DEEPBUMP_OT_DeepBumpOperator(Operator):
+    bl_idname = 'deepbump.operator'
     bl_label = 'DeepBump'
-    bl_idname = 'wm.deep_bump'
+    bl_description = ('Generates a normal map from an image.' 
+                      'Settings are in DeepBump panel (Node Editor)')
+    
     progress_started = False
     ort_session = None
 
     @classmethod
     def poll(self, context):
-        selected_node_type = context.active_node.bl_idname
-        return (context.area.type == 'NODE_EDITOR') and (selected_node_type == 'ShaderNodeTexImage')
+        if context.active_node is not None :
+            selected_node_type = context.active_node.bl_idname
+            return (context.area.type == 'NODE_EDITOR') and (selected_node_type == 'ShaderNodeTexImage')
+        return False
 
     def progress_print(self, current, total):
         wm = bpy.context.window_manager
         if self.progress_started:
             wm.progress_update(current)
-            print('{}/{}'.format(current, total))
+            print(f'DeepBump : {current}/{total}')
         else:
             wm.progress_begin(0, total)
             self.progress_started = True
 
     def execute(self, context):
-        # make sure dependencies are installed
-        try:
-            import numpy as np
-            import onnxruntime as ort
-            from . import infer
-        except ImportError as e:
-            self.report({'WARNING'}, 'Dependencies missing, check readme.')
-            print(e)
-            return {'CANCELLED'}
-
-        # get input image from selected node
+        # Get input image from selected node
         input_node = context.active_node
         input_img = input_node.image
-        if input_img == None:
+        if input_img is None:
             self.report(
                 {'WARNING'}, 'Selected image node must have an image assigned to it.')
             return {'CANCELLED'}
 
-        # convert to C,H,W numpy array
+        # Convert to C,H,W numpy array
         width = input_img.size[0]
         height = input_img.size[1]
         channels = input_img.channels
         img = np.array(input_img.pixels)
         img = np.reshape(img, (channels, width, height), order='F')
         img = np.transpose(img, (0, 2, 1))
-        # flip height
+        # Flip height
         img = np.flip(img, axis=1)
 
-        # remove alpha & convert to grayscale
+        # Remove alpha & convert to grayscale
         img = np.mean(img[0:3], axis=0, keepdims=True)
 
-        # split image in tiles
+        # Split image in tiles
         tile_size = (256, 256)
         OVERLAP = context.scene.deep_bump_tool.tiles_overlap_enum
         overlaps = {'SMALL': 20, 'MEDIUM': 50, 'BIG': 124}
         stride_size = (tile_size[0]-overlaps[OVERLAP],
                        tile_size[1]-overlaps[OVERLAP])
-        print('tilling')
+        print('DeepBump : tilling')
         tiles, paddings = infer.tiles_split(img, tile_size, stride_size)
 
-        # load model (if not already loaded)
-        if self.ort_session == None:
-            print('loading model')
+        # Load model (if not already loaded)
+        if self.ort_session is None:
+            print('DeepBump : loading model')
             addon_path = str(pathlib.Path(__file__).parent.absolute())
             self.ort_session = ort.InferenceSession(
                 addon_path+'/deepbump256.onnx')
+            self.ort_session
 
-        # predict normal map for each tile
-        print('generating')
+        # Predict normal map for each tile
+        print('DeepBump : generating')
         self.progress_started = False
         pred_tiles = infer.tiles_infer(
             tiles, self.ort_session, progress_callback=self.progress_print)
 
-        # merge tiles
-        print('merging')
+        # Merge tiles
+        print('DeepBump : merging')
         pred_img = infer.tiles_merge(
             pred_tiles, stride_size, (3, img.shape[1], img.shape[2]), paddings)
 
-        # normalize each pixel to unit vector
+        # Normalize each pixel to unit vector
         pred_img = infer.normalize(pred_img)
 
-        # create new image datablock
+        # Create new image datablock
         img_name = os.path.splitext(input_img.name)
         normal_name = img_name[0] + '_normal' + img_name[1]
         normal_img = bpy.data.images.new(
             normal_name, width=width, height=height)
         normal_img.colorspace_settings.name = 'Non-Color'
 
-        # flip height
+        # Flip height
         pred_img = np.flip(pred_img, axis=1)
-        # add alpha channel
+        # Add alpha channel
         pred_img = np.concatenate(
             [pred_img, np.ones((1, height, width))], axis=0)
-        # flatten to array
+        # Flatten to array
         pred_img = np.transpose(pred_img, (0, 2, 1)).flatten('F')
-        # write to image block
+        # Write to image block
         normal_img.pixels = pred_img
 
-        # create new node for normal map
+        # Create new node for normal map
         normal_node = context.material.node_tree.nodes.new(
             type='ShaderNodeTexImage')
         normal_node.location = input_node.location
         normal_node.location[1] -= input_node.width*1.2
         normal_node.image = normal_img
 
-        # create normal vector node & link nodes
+        # Create normal vector node & link nodes
         normal_vec_node = context.material.node_tree.nodes.new(
             type='ShaderNodeNormalMap')
         normal_vec_node.location = normal_node.location
@@ -157,7 +199,7 @@ class WM_OT_DeepBumpOperator(Operator):
         links.new(normal_node.outputs['Color'],
                   normal_vec_node.inputs['Color'])
 
-        # if input image was linked to a BSDF, link to BSDF normal slot
+        # If input image was linked to a BSDF, link to BSDF normal slot
         if input_node.outputs['Color'].is_linked:
             if len(input_node.outputs['Color'].links) == 1:
                 to_node = input_node.outputs['Color'].links[0].to_node
@@ -165,16 +207,49 @@ class WM_OT_DeepBumpOperator(Operator):
                     links.new(
                         normal_vec_node.outputs['Normal'], to_node.inputs['Normal'])
 
+        print('DeepBump : done')
         return {'FINISHED'}
 
+
+class DEEPBUMP_OT_install_dependencies(bpy.types.Operator):
+    bl_idname = 'deepbump.install_dependencies'
+    bl_label = 'Install dependencies'
+    bl_description = 'Downloads and installs the required python packages for this add-on.'
+    bl_options = {'REGISTER', 'INTERNAL'}
+
+    @classmethod
+    def poll(self, context):
+        # Deactivate when dependencies have been installed
+        return not dependencies_installed
+
+    def execute(self, context):
+        try:
+            install_pip()
+            for dependency in dependencies:
+                install_and_import_module(module_name=dependency.module,
+                                          package_name=dependency.package,
+                                          global_name=dependency.name)
+        except (subprocess.CalledProcessError, ImportError) as err:
+            self.report({'ERROR'}, str(err))
+            return {'CANCELLED'}
+
+        global dependencies_installed
+        dependencies_installed = True
+
+        # Register the panels, operators, etc. since dependencies are installed
+        register_functionality()
+
+        return {"FINISHED"}
+
+
 # ------------------------------------------------------------------------
-#    Panel in Object Mode
+#    UI (DeepBump panel & addon install dependencies button)
 # ------------------------------------------------------------------------
 
 
-class OBJECT_PT_DeepBumpPanel(Panel):
+class DEEPBUMP_PT_DeepBumpPanel(Panel):
+    bl_idname = 'DEEPBUMP_PT_DeepBumpPanel'
     bl_label = 'DeepBump'
-    bl_idname = 'OBJECT_PT_DeepBumpPanel'
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'DeepBump'
@@ -192,31 +267,75 @@ class OBJECT_PT_DeepBumpPanel(Panel):
         layout.prop(deep_bump_tool, 'tiles_overlap_enum', text='')
 
         layout.separator()
-        layout.operator('wm.deep_bump', text='Generate Normal Map')
+        layout.operator('deepbump.operator', text='Generate Normal Map')
+
+
+class DEEPBUMP_preferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    def draw(self, context):
+        layout = self.layout
+        if dependencies_installed :
+            layout.label(text='Required dependencies are installed', icon='CHECKMARK')
+        else :
+            layout.label(text='Installing dependencies requires internet and might take a few minutes', 
+                         icon='INFO')
+            layout.operator(DEEPBUMP_OT_install_dependencies.bl_idname, icon='CONSOLE')
+
 
 # ------------------------------------------------------------------------
 #    Registration
 # ------------------------------------------------------------------------
 
 
+# Classes for the addon actual functionality
 classes = (
     DeepBumpProperties,
-    WM_OT_DeepBumpOperator,
-    OBJECT_PT_DeepBumpPanel
+    DEEPBUMP_OT_DeepBumpOperator,
+    DEEPBUMP_PT_DeepBumpPanel
+)
+# Classes for downloading & installing dependencies
+preference_classes = (
+    DEEPBUMP_OT_install_dependencies,
+    DEEPBUMP_preferences
 )
 
 
 def register():
-    from bpy.utils import register_class
+    global dependencies_installed
+    dependencies_installed = False
+
+    for cls in preference_classes:
+        bpy.utils.register_class(cls)
+
+    try:
+        for dependency in dependencies:
+            import_module(module_name=dependency.module, global_name=dependency.name)
+    except ModuleNotFoundError:
+        # Don't register other panels, operators etc.
+        return
+
+    dependencies_installed = True
+    register_functionality()
+
+
+def register_functionality():
     for cls in classes:
-        register_class(cls)
+        bpy.utils.register_class(cls)
     bpy.types.Scene.deep_bump_tool = PointerProperty(type=DeepBumpProperties)
+    from . import infer
+    # Disable MS telemetry
+    ort.disable_telemetry_events()
 
 
 def unregister():
-    from bpy.utils import unregister_class
-    for cls in reversed(classes):
-        unregister_class(cls)
+    for cls in preference_classes:
+        bpy.utils.unregister_class(cls)
+
+    if dependencies_installed:
+        for cls in classes:
+            bpy.utils.unregister_class(cls)
+            
     del bpy.types.Scene.deep_bump_tool
 
 
