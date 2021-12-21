@@ -30,7 +30,7 @@ By installing `onnxruntime`, be aware of
 [Microsoft conditions](https://github.com/microsoft/onnxruntime/blob/master/docs/Privacy.md).
     
 Once dependencies are met,
-[download DeepBump as a ZIP](https://github.com/HugoTini/DeepBump/archive/master.zip). 
+[download DeepBump as a ZIP](https://github.com/HugoTini/DeepBump/releases). 
 Then in Blender go to _Edit -> Preferences -> Add-ons -> Install_ 
 and select the downloaded ZIP file. Then enable the add-on.
 
