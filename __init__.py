@@ -79,7 +79,8 @@ class DeepBumpProperties(PropertyGroup):
         description='More overlap might help reducing some artifacts but takes longer to compute.',
         items=[('SMALL', 'Small', 'Small overlap between tiles.'),
                ('MEDIUM', 'Medium', 'Medium overlap between tiles.'),
-               ('BIG', 'Big', 'Big overlap between tiles.')]
+               ('LARGE', 'Large', 'Large overlap between tiles.')],
+        default='LARGE'
     )
 
 
@@ -136,13 +137,13 @@ class DEEPBUMP_OT_DeepBumpOperator(Operator):
         img = np.mean(img[0:3], axis=0, keepdims=True)
 
         # Split image in tiles
-        tile_size = (256, 256)
-        OVERLAP = context.scene.deep_bump_tool.tiles_overlap_enum
-        overlaps = {'SMALL': 20, 'MEDIUM': 50, 'BIG': 124}
-        stride_size = (tile_size[0]-overlaps[OVERLAP],
-                       tile_size[1]-overlaps[OVERLAP])
         print('DeepBump : tilling')
-        tiles, paddings = infer.tiles_split(img, tile_size, stride_size)
+        tile_size = 256
+        OVERLAP = context.scene.deep_bump_tool.tiles_overlap_enum
+        overlaps = {'SMALL': tile_size//6, 'MEDIUM': tile_size//4, 'LARGE': tile_size//2}
+        stride_size = tile_size-overlaps[OVERLAP]
+        tiles, paddings = infer.tiles_split(img, (tile_size, tile_size),
+                                            (stride_size, stride_size))
 
         # Load model (if not already loaded)
         if self.ort_session is None:
@@ -160,8 +161,8 @@ class DEEPBUMP_OT_DeepBumpOperator(Operator):
 
         # Merge tiles
         print('DeepBump : merging')
-        pred_img = infer.tiles_merge(
-            pred_tiles, stride_size, (3, img.shape[1], img.shape[2]), paddings)
+        pred_img = infer.tiles_merge(pred_tiles, (stride_size, stride_size), 
+                                    (3, img.shape[1], img.shape[2]), paddings)
 
         # Normalize each pixel to unit vector
         pred_img = infer.normalize(pred_img)

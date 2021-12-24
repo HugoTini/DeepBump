@@ -14,11 +14,11 @@ def tiles_split(img, tile_size, stride_size):
     img_h, img_w = img.shape[1], img.shape[2]
 
     # stride must be even
-    assert((stride_h % 2 == 0) and (stride_w % 2 == 0))
-    # stride must greater than half tile
-    assert((stride_h > tile_h/2) and (stride_w > tile_w/2))
-    # stride must be smaller than tile size
-    assert((stride_h < tile_h) and (stride_w < tile_w))
+    assert (stride_h % 2 == 0) and (stride_w % 2 == 0)
+    # stride must be greater or equal than half tile
+    assert (stride_h >= tile_h/2) and (stride_w >= tile_w/2)
+    # stride must be smaller or equal tile size
+    assert (stride_h <= tile_h) and (stride_w <= tile_w)
 
     # find total height & width padding sizes
     pad_h, pad_w = 0, 0
@@ -97,11 +97,10 @@ def generate_mask(tile_size, stride_size):
     mask[-ramp_h:, ramp_w:-ramp_w] = np.transpose(np.linspace(1, 0, num=ramp_h)[None],
                                                   (1, 0))
 
+    # Assume tiles are squared
+    assert ramp_h == ramp_w
     # top left corner
-    plane_h = np.repeat(np.transpose(np.linspace(0, 0.25, num=ramp_h)[None], (1, 0)),
-                        ramp_w, axis=1)
-    plane_w = np.repeat(np.linspace(0, 0.25, num=ramp_w)[None], ramp_h, axis=0)
-    corner = plane_h + plane_w
+    corner = np.rot90(corner_mask(ramp_h), 2)
     mask[:ramp_h, :ramp_w] = corner
     # top right corner
     corner = np.flip(corner, 1)
@@ -116,6 +115,44 @@ def generate_mask(tile_size, stride_size):
     return mask
 
 
+def corner_mask(side_length):
+    '''Generates the corner part of the pyramidal-like mask. 
+    Currently, only for square shapes.'''
+
+    corner = np.zeros([side_length, side_length])
+
+    for h in range(0, side_length):
+        for w in range(0, side_length):
+            if h >= w:
+                sh = h / (side_length-1)
+                corner[h, w] = 1-sh
+            if h <= w:
+                sw = w / (side_length-1)
+                corner[h, w] = 1-sw
+
+    return corner-0.25*scaling_mask(side_length)
+
+
+def scaling_mask(side_length):
+
+    scaling = np.zeros([side_length, side_length])
+
+    for h in range(0, side_length):
+        for w in range(0, side_length):
+            sh = h / (side_length-1)
+            sw = w / (side_length-1)
+            if h >= w and h <= side_length-w:
+                scaling[h, w] = sw
+            if h <= w and h <= side_length-w:
+                scaling[h, w] = sh
+            if h >= w and h >= side_length-w:
+                scaling[h, w] = 1-sh
+            if h <= w and h >= side_length-w:
+                scaling[h, w] = 1-sw
+
+    return 2*scaling
+
+
 def tiles_merge(tiles, stride_size, img_size, paddings):
     '''Merges the list of tiles into one image. img_size is the original size, before 
     padding.'''
@@ -127,11 +164,11 @@ def tiles_merge(tiles, stride_size, img_size, paddings):
     stride_h, stride_w = stride_size
 
     # stride must be even
-    assert((stride_h % 2 == 0) and (stride_w % 2 == 0))
-    # stride must greater than half tile
-    assert((stride_h > tile_h/2) and (stride_w > tile_w/2))
-    # stride must be smaller than tile size
-    assert((stride_h < tile_h) and (stride_w < tile_w))
+    assert (stride_h % 2 == 0) and (stride_w % 2 == 0)
+    # stride must be greater or equal than half tile
+    assert (stride_h >= tile_h/2) and (stride_w >= tile_w/2)
+    # stride must be smaller or equal tile size
+    assert (stride_h <= tile_h) and (stride_w <= tile_w)
 
     merged = np.zeros((img_size[0], height, width))
     mask = generate_mask((tile_h, tile_w), stride_size)

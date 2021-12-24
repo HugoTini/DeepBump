@@ -21,4 +21,4 @@ Go to the DeepBump folder, then use with :
 
     python deepbump_cli.py -i <path_input_image> -n <path_generated_normal> -o <overlap>
 
-where `<overlap>` can be `small`, `medium` or `big`.
+where `<overlap>` can be `small`, `medium` or `large`.
