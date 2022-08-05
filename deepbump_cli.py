@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy as np
-import infer
+import utils_inference
 import onnxruntime as ort
 from argparse import ArgumentParser
 
@@ -36,18 +36,18 @@ tile_size = 256
 overlaps = {'small':  tile_size//6, 'medium':  tile_size//4,
             'large': tile_size//2}
 stride_size = tile_size-overlaps[args.overlap]
-tiles, paddings = infer.tiles_split(img, (tile_size, tile_size),
+tiles, paddings = utils_inference.tiles_split(img, (tile_size, tile_size),
                                     (stride_size, stride_size))
 
 # Predict tiles normal map
 print('generating')
 ort_session = ort.InferenceSession('./deepbump256.onnx')
-pred_tiles = infer.tiles_infer(tiles, ort_session,
+pred_tiles = utils_inference.tiles_infer(tiles, ort_session,
                                progress_callback=progress_print)
 
 # Merge tiles
 print('merging')
-pred_img = infer.tiles_merge(pred_tiles, (stride_size, stride_size),
+pred_img = utils_inference.tiles_merge(pred_tiles, (stride_size, stride_size),
                              (3, img.shape[1], img.shape[2]),
                              paddings)
 

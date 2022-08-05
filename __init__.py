@@ -2,8 +2,8 @@ bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal maps from image textures',
     'author': 'Hugo Tini',
-    'version': (3, 0, 0),
-    'blender': (3, 0, 0),
+    'version': (4, 0, 0),
+    'blender': (3, 2, 1),
     'location': 'Node Editor > DeepBump',
     'category': 'Material',
     'warning': 'Requires installation of dependencies',
@@ -13,8 +13,7 @@ bl_info = {
 
 import bpy
 from bpy.types import (Panel, Operator, PropertyGroup)
-from bpy.props import (EnumProperty, PointerProperty)
-import pathlib
+from bpy.props import (EnumProperty, BoolProperty, PointerProperty)
 import os
 import subprocess
 import sys
@@ -74,14 +73,36 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
 
 class DeepBumpProperties(PropertyGroup):
 
-    tiles_overlap_enum: EnumProperty(
+    # Color -> Normals panel props
+    colortonormals_tiles_overlap_enum: EnumProperty(
         name='Tiles overlap',
-        description='More overlap might help reducing some artifacts but takes longer to compute.',
-        items=[('SMALL', 'Small', 'Small overlap between tiles.'),
-               ('MEDIUM', 'Medium', 'Medium overlap between tiles.'),
-               ('LARGE', 'Large', 'Large overlap between tiles.')],
+        description='More overlap might help reducing some artifacts but takes longer to compute',
+        items=[('SMALL', 'Small', 'Small overlap between tiles'),
+               ('MEDIUM', 'Medium', 'Medium overlap between tiles'),
+               ('LARGE', 'Large', 'Large overlap between tiles')],
         default='LARGE'
     )
+
+    # Normals -> Height panel props
+    normalstoheight_seamless_bool: BoolProperty(
+        description='If input normal map is seamless, keep enabled. Toggle off otherwise',
+        default=True
+    )
+
+    # Normals -> Curvature panel props
+    normalstocurvature_blur_radius_enum: EnumProperty(
+        name='Curvature blur radius',
+        description='Curvature smoothness',
+        items=[('SMALLEST', 'Smallest', 'Smallest blur radius'),
+               ('SMALLER', 'Smaller', 'Smaller blur radius'),
+               ('SMALL', 'Small', 'Small blur radius'),
+               ('MEDIUM', 'Medium', 'Medium blur radius'),
+               ('LARGE', 'Large', 'Large blur radius'),
+               ('LARGER', 'Larger', 'Larger blur radius'),
+               ('LARGEST', 'Largest', 'Largest blur radius')],
+        default='SMALL'
+    )
+
 
 
 # ------------------------------------------------------------------------
@@ -89,14 +110,12 @@ class DeepBumpProperties(PropertyGroup):
 # ------------------------------------------------------------------------
 
 
-class DEEPBUMP_OT_DeepBumpOperator(Operator):
-    bl_idname = 'deepbump.operator'
-    bl_label = 'DeepBump'
-    bl_description = ('Generates a normal map from an image.' 
-                      'Settings are in DeepBump panel (Node Editor)')
+class DEEPBUMP_OT_ColorToNormalsOperator(Operator):
+    bl_idname = 'deepbump.colortonormals'
+    bl_label = 'DeepBump Color → Normals'
+    bl_description = bl_label
     
     progress_started = False
-    ort_session = None
 
     @classmethod
     def poll(self, context):
@@ -109,95 +128,52 @@ class DEEPBUMP_OT_DeepBumpOperator(Operator):
         wm = bpy.context.window_manager
         if self.progress_started:
             wm.progress_update(current)
-            print(f'DeepBump : {current}/{total}')
+            print(f'DeepBump Color → Normals : {current}/{total}')
         else:
             wm.progress_begin(0, total)
             self.progress_started = True
 
     def execute(self, context):
-        # Get input image from selected node
+         # Get input image from selected node
         input_node = context.active_node
-        input_img = input_node.image
-        if input_img is None:
+        input_bl_img = input_node.image
+        if input_bl_img is None:
             self.report(
                 {'WARNING'}, 'Selected image node must have an image assigned to it.')
             return {'CANCELLED'}
 
-        # Convert to C,H,W numpy array
-        width = input_img.size[0]
-        height = input_img.size[1]
-        channels = input_img.channels
-        img = np.array(input_img.pixels)
-        img = np.reshape(img, (channels, width, height), order='F')
-        img = np.transpose(img, (0, 2, 1))
-        # Flip height
-        img = np.flip(img, axis=1)
+        # Convert image to numpy C,H,W array
+        input_img = utils.bl_image_to_np(input_bl_img)
 
-        # Remove alpha & convert to grayscale
-        img = np.mean(img[0:3], axis=0, keepdims=True)
-
-        # Split image in tiles
-        print('DeepBump : tilling')
-        tile_size = 256
-        OVERLAP = context.scene.deep_bump_tool.tiles_overlap_enum
-        overlaps = {'SMALL': tile_size//6, 'MEDIUM': tile_size//4, 'LARGE': tile_size//2}
-        stride_size = tile_size-overlaps[OVERLAP]
-        tiles, paddings = infer.tiles_split(img, (tile_size, tile_size),
-                                            (stride_size, stride_size))
-
-        # Load model (if not already loaded)
-        if self.ort_session is None:
-            print('DeepBump : loading model')
-            addon_path = str(pathlib.Path(__file__).parent.absolute())
-            self.ort_session = ort.InferenceSession(
-                addon_path+'/deepbump256.onnx')
-            self.ort_session
-
-        # Predict normal map for each tile
-        print('DeepBump : generating')
+        # Compute normals
+        OVERLAP = context.scene.deep_bump_tool.colortonormals_tiles_overlap_enum
         self.progress_started = False
-        pred_tiles = infer.tiles_infer(
-            tiles, self.ort_session, progress_callback=self.progress_print)
-
-        # Merge tiles
-        print('DeepBump : merging')
-        pred_img = infer.tiles_merge(pred_tiles, (stride_size, stride_size), 
-                                    (3, img.shape[1], img.shape[2]), paddings)
-
-        # Normalize each pixel to unit vector
-        pred_img = infer.normalize(pred_img)
+        output_img = module_color_to_normals.apply(input_img, OVERLAP, self.progress_print)
 
         # Create new image datablock
-        img_name = os.path.splitext(input_img.name)
-        normal_name = img_name[0] + '_normal' + img_name[1]
-        normal_img = bpy.data.images.new(
-            normal_name, width=width, height=height)
-        normal_img.colorspace_settings.name = 'Non-Color'
+        input_img_name = os.path.splitext(input_bl_img.name)
+        output_img_name = input_img_name[0] + '_normals' + input_img_name[1]
+        output_bl_img = bpy.data.images.new(
+            output_img_name, width=input_bl_img.size[0], height=input_bl_img.size[1])
+        output_bl_img.colorspace_settings.name = 'Non-Color'
 
-        # Flip height
-        pred_img = np.flip(pred_img, axis=1)
-        # Add alpha channel
-        pred_img = np.concatenate(
-            [pred_img, np.ones((1, height, width))], axis=0)
-        # Flatten to array
-        pred_img = np.transpose(pred_img, (0, 2, 1)).flatten('F')
-        # Write to image block
-        normal_img.pixels = pred_img
+        # Convert numpy C,H,W array back to blender image pixels
+        output_bl_img.pixels = utils.np_to_bl_pixels(output_img)
 
         # Create new node for normal map
-        normal_node = context.material.node_tree.nodes.new(
+        output_node = context.material.node_tree.nodes.new(
             type='ShaderNodeTexImage')
-        normal_node.location = input_node.location
-        normal_node.location[1] -= input_node.width*1.2
-        normal_node.image = normal_img
+        output_node.location = input_node.location
+        output_node.location[1] -= input_node.width*1.2
+        output_node.image = output_bl_img
 
         # Create normal vector node & link nodes
         normal_vec_node = context.material.node_tree.nodes.new(
             type='ShaderNodeNormalMap')
-        normal_vec_node.location = normal_node.location
-        normal_vec_node.location[0] += normal_node.width*1.1
+        normal_vec_node.location = output_node.location
+        normal_vec_node.location[0] += output_node.width*1.1
         links = context.material.node_tree.links
-        links.new(normal_node.outputs['Color'],
+        links.new(output_node.outputs['Color'],
                   normal_vec_node.inputs['Color'])
 
         # If input image was linked to a BSDF, link to BSDF normal slot
@@ -208,7 +184,139 @@ class DEEPBUMP_OT_DeepBumpOperator(Operator):
                     links.new(
                         normal_vec_node.outputs['Normal'], to_node.inputs['Normal'])
 
-        print('DeepBump : done')
+        print('DeepBump Color → Normals : done')
+        return {'FINISHED'}
+
+
+class DEEPBUMP_OT_NormalsToHeightOperator(Operator):
+    bl_idname = 'deepbump.normalstoheight'
+    bl_label = 'DeepBump Normals → Height'
+    bl_description = bl_label
+
+    progress_started = False
+
+    @classmethod
+    def poll(self, context):
+        if context.active_node is not None :
+            selected_node_type = context.active_node.bl_idname
+            return (context.area.type == 'NODE_EDITOR') and (selected_node_type == 'ShaderNodeTexImage')
+        return False
+
+    def progress_print(self, current, total):
+        wm = bpy.context.window_manager
+        if self.progress_started:
+            wm.progress_update(current)
+            print(f'DeepBump Normals → Height : {current}/{total}')
+        else:
+            wm.progress_begin(0, total)
+            self.progress_started = True
+
+    def execute(self, context):
+        # Get input image from selected node
+        input_node = context.active_node
+        input_bl_img = input_node.image
+        if input_bl_img is None:
+            self.report(
+                {'WARNING'}, 'Selected image node must have an image assigned to it.')
+            return {'CANCELLED'}
+        if input_bl_img.colorspace_settings.name != 'Non-Color':
+            self.report(
+                {'WARNING'}, 'Selected image node must be a normal map in Non-Color colorspace.')
+            return {'CANCELLED'}
+
+        # Convert image to numpy C,H,W array
+        input_img = utils.bl_image_to_np(input_bl_img)
+
+        # Compute height
+        print('DeepBump Normals → Height : computing')
+        SEAMLESS = context.scene.deep_bump_tool.normalstoheight_seamless_bool
+        self.progress_started = False
+        output_img = module_normals_to_height.apply(input_img, SEAMLESS, self.progress_print)
+
+        # Create new image datablock
+        input_img_name = os.path.splitext(input_bl_img.name)
+        output_img_name = input_img_name[0] + '_height' + input_img_name[1]
+        output_bl_img = bpy.data.images.new(
+            output_img_name, width=input_bl_img.size[0], height=input_bl_img.size[1])
+        output_bl_img.colorspace_settings.name = 'Non-Color'
+
+        # Convert numpy C,H,W array back to blender imaga pixels
+        output_bl_img.pixels = utils.np_to_bl_pixels(output_img)
+
+        # Create new node for curvature map
+        output_node = context.material.node_tree.nodes.new(
+            type='ShaderNodeTexImage')
+        output_node.location = input_node.location
+        output_node.location[1] -= input_node.width*1.2
+        output_node.image = output_bl_img
+
+        print('DeepBump Normals → Height : done')
+        return {'FINISHED'}
+
+
+class DEEPBUMP_OT_NormalsToCurvatureOperator(Operator):
+    bl_idname = 'deepbump.normalstocurvature'
+    bl_label = 'DeepBump Normals → Curvature'
+    bl_description = bl_label
+    
+    progress_started = False
+
+    @classmethod
+    def poll(self, context):
+        if context.active_node is not None :
+            selected_node_type = context.active_node.bl_idname
+            return (context.area.type == 'NODE_EDITOR') and (selected_node_type == 'ShaderNodeTexImage')
+        return False
+
+    def progress_print(self, current, total):
+        wm = bpy.context.window_manager
+        if self.progress_started:
+            wm.progress_update(current)
+            print(f'DeepBump Normals → Curvature : {current}/{total}')
+        else:
+            wm.progress_begin(0, total)
+            self.progress_started = True
+
+    def execute(self, context):
+        # Get input image from selected node
+        input_node = context.active_node
+        input_bl_img = input_node.image
+        if input_bl_img is None:
+            self.report(
+                {'WARNING'}, 'Selected image node must have an image assigned to it.')
+            return {'CANCELLED'}
+        if input_bl_img.colorspace_settings.name != 'Non-Color':
+            self.report(
+                {'WARNING'}, 'Selected image node must be a normal map in Non-Color colorspace.')
+            return {'CANCELLED'}
+
+        # Convert image to numpy C,H,W array
+        input_img = utils.bl_image_to_np(input_bl_img)
+
+        # Compute curvature
+        print('DeepBump Normals → Curvature : computing')
+        BLUR_RADIUS = context.scene.deep_bump_tool.normalstocurvature_blur_radius_enum
+        self.progress_started = False
+        output_img = module_normals_to_curvature.apply(input_img, BLUR_RADIUS, self.progress_print)
+
+        # Create new image datablock
+        input_img_name = os.path.splitext(input_bl_img.name)
+        output_img_name = input_img_name[0] + '_curvature' + input_img_name[1]
+        output_bl_img = bpy.data.images.new(
+            output_img_name, width=input_bl_img.size[0], height=input_bl_img.size[1])
+        output_bl_img.colorspace_settings.name = 'Non-Color'
+
+        # Convert numpy C,H,W array back to blender imaga pixels
+        output_bl_img.pixels = utils.np_to_bl_pixels(output_img)
+
+        # Create new node for curvature map
+        output_node = context.material.node_tree.nodes.new(
+            type='ShaderNodeTexImage')
+        output_node.location = input_node.location
+        output_node.location[1] -= input_node.width*1.2
+        output_node.image = output_bl_img
+
+        print('DeepBump Normals → Curvature : done')
         return {'FINISHED'}
 
 
@@ -248,9 +356,9 @@ class DEEPBUMP_OT_install_dependencies(bpy.types.Operator):
 # ------------------------------------------------------------------------
 
 
-class DEEPBUMP_PT_DeepBumpPanel(Panel):
-    bl_idname = 'DEEPBUMP_PT_DeepBumpPanel'
-    bl_label = 'DeepBump'
+class DEEPBUMP_PT_ColorToNormalsPanel(Panel):
+    bl_idname = 'DEEPBUMP_PT_ColorToNormalsPanel'
+    bl_label = 'Color → Normals'
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'UI'
     bl_category = 'DeepBump'
@@ -263,12 +371,50 @@ class DEEPBUMP_PT_DeepBumpPanel(Panel):
     def draw(self, context):
         layout = self.layout
         deep_bump_tool = context.scene.deep_bump_tool
+        row = layout.row()
+        row.label(text='Tiles overlap')
+        row.prop(deep_bump_tool, 'colortonormals_tiles_overlap_enum', text='')
+        layout.operator('deepbump.colortonormals', text='Generate Normal Map')
 
-        layout.label(text='Tiles overlap :')
-        layout.prop(deep_bump_tool, 'tiles_overlap_enum', text='')
 
-        layout.separator()
-        layout.operator('deepbump.operator', text='Generate Normal Map')
+class DEEPBUMP_PT_NormalsToHeightPanel(Panel):
+    bl_idname = 'DEEPBUMP_PT_NormalsToHeight'
+    bl_label = 'Normals → Height'
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'DeepBump'
+    bl_context = 'objectmode'
+
+    @classmethod
+    def poll(self, context):
+        return context.object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        deep_bump_tool = context.scene.deep_bump_tool
+        layout.prop(deep_bump_tool, 'normalstoheight_seamless_bool', text='Seamless normals')
+        layout.operator('deepbump.normalstoheight', text='Generate Height Map')
+
+
+class DEEPBUMP_PT_NormalsToCurvaturePanel(Panel):
+    bl_idname = 'DEEPBUMP_PT_NormalsToCurvature'
+    bl_label = 'Normals → Curvature'
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'DeepBump'
+    bl_context = 'objectmode'
+
+    @classmethod
+    def poll(self, context):
+        return context.object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        deep_bump_tool = context.scene.deep_bump_tool
+        row = layout.row()
+        row.label(text='Blur radius')
+        row.prop(deep_bump_tool, 'normalstocurvature_blur_radius_enum', text='')
+        layout.operator('deepbump.normalstocurvature', text='Generate Curvature Map')
 
 
 class DEEPBUMP_preferences(bpy.types.AddonPreferences):
@@ -292,8 +438,15 @@ class DEEPBUMP_preferences(bpy.types.AddonPreferences):
 # Classes for the addon actual functionality
 classes = (
     DeepBumpProperties,
-    DEEPBUMP_OT_DeepBumpOperator,
-    DEEPBUMP_PT_DeepBumpPanel
+    # Color -> Normals operator & panel
+    DEEPBUMP_OT_ColorToNormalsOperator,
+    DEEPBUMP_PT_ColorToNormalsPanel,
+    # Normals -> Height operator & panel
+    DEEPBUMP_OT_NormalsToHeightOperator,
+    DEEPBUMP_PT_NormalsToHeightPanel,
+    # Normals -> Curvature operator & panel
+    DEEPBUMP_OT_NormalsToCurvatureOperator,
+    DEEPBUMP_PT_NormalsToCurvaturePanel,
 )
 # Classes for downloading & installing dependencies
 preference_classes = (
@@ -324,7 +477,11 @@ def register_functionality():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.deep_bump_tool = PointerProperty(type=DeepBumpProperties)
-    from . import infer
+    # Addon specific imports
+    from . import module_color_to_normals
+    from . import module_normals_to_height
+    from . import module_normals_to_curvature
+    from . import utils
     # Disable MS telemetry
     ort.disable_telemetry_events()
 
