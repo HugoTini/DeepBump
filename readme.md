@@ -10,7 +10,7 @@ DeepBump is a machine-learning driven tool to generate normal & height maps from
 
 2) In Blender, go to _Edit -> Preferences -> Add-ons -> Install_ and select the downloaded ZIP file. Then enable the add-on.
 
-3) In the add-on preference, click the '_Install dependencies_' button (this requires an internet connection and might take a while).
+3) In the add-on preference, click the '_Install dependencies_' button (this requires an internet connection and might take a while). In case of error, try running Blender as administrator for this step.
 
 By installing those dependencies, be aware of [Microsoft conditions](https://github.com/microsoft/onnxruntime/blob/master/docs/Privacy.md). This add-on use available APIs to disable telemetry.
 
