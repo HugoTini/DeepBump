@@ -26,6 +26,8 @@ In the Shader Editor, in the right panel under the _DeepBump_ tab:
 
 **Normals → Curvature** : Select the generated normal map image node and click _Generate Curvature Map_.
 
+For command-line usage, see [cli.md](cli.md).
+
 # License
 
 This repo is under the [GPL license](LICENSE). The training code is currently not available.

@@ -37,12 +37,15 @@ def apply(normals_img, blur_radius, progress_callback):
     'MEDIUM', 'LARGE', 'LARGER', 'LARGEST'."""
 
     # Convolutions on normal map red & green channels
-    progress_callback(0, 4)
+    if progress_callback is not None:
+        progress_callback(0, 4)
     diff_kernel = np.array([-1, 0, 1])
     h_conv = conv_1d(normals_img[0, :, :], diff_kernel)
-    progress_callback(1, 4)
+    if progress_callback is not None:
+        progress_callback(1, 4)
     v_conv = conv_1d(-1 * normals_img[1, :, :].T, diff_kernel).T
-    progress_callback(2, 4)
+    if progress_callback is not None:
+        progress_callback(2, 4)
 
     # Sum detected edges
     edges_conv = h_conv + v_conv
@@ -75,9 +78,11 @@ def apply(normals_img, blur_radius, progress_callback):
         sigma = 1
     g_kernel = gaussian_kernel(blur_radius_px, sigma)
     h_blur = conv_1d(edges_conv, g_kernel)
-    progress_callback(3, 4)
+    if progress_callback is not None:
+        progress_callback(3, 4)
     v_blur = conv_1d(h_blur.T, g_kernel).T
-    progress_callback(4, 4)
+    if progress_callback is not None:
+        progress_callback(4, 4)
 
     # Normalize to [0,1]
     curvature = normalize(v_blur)

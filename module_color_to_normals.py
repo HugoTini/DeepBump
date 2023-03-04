@@ -1,7 +1,11 @@
 import numpy as np
 import pathlib
-from . import utils_inference
 import onnxruntime as ort
+try :
+    from . import utils_inference
+except ImportError:
+    # Cannot use . import when using as CLI
+    import utils_inference
 
 # Disable MS telemetry
 ort.disable_telemetry_events()
