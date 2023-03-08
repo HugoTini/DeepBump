@@ -40,7 +40,9 @@ parser.add_argument(
 args = parser.parse_args()
 
 # Read input image
-in_img = iio.imread(args.in_img_path).T / 255
+in_img = iio.imread(args.in_img_path)
+# Convert from H,W,C in [0, 256] to C,H,W in [0,1]
+in_img = np.transpose(in_img, (2, 0, 1)) / 255
 
 # Apply processing
 if args.module == "color_to_normals":
@@ -54,5 +56,7 @@ if args.module == "normals_to_height":
         in_img, args.normals_to_height_seamless == "TRUE", None
     )
 
+# Convert from C,H,W in [0,1] to H,W,C in [0, 256]
+out_img = (np.transpose(out_img, (1, 2, 0)) * 255).astype(np.uint8)
 # Write output image
-iio.imwrite(args.out_img_path, (out_img.T * 255).astype(np.uint8))
+iio.imwrite(args.out_img_path, out_img)
