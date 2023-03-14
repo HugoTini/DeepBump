@@ -2,7 +2,7 @@ bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal maps from image textures',
     'author': 'Hugo Tini',
-    'version': (5, 0, 0),
+    'version': (6, 0, 0),
     'blender': (3, 3, 4),
     'location': 'Node Editor > DeepBump',
     'category': 'Material',
