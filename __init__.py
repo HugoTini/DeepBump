@@ -1,6 +1,6 @@
 bl_info = {
     'name': 'DeepBump',
-    'description': 'Generates normal maps from image textures',
+    'description': 'Generates normal & height maps from image textures',
     'author': 'Hugo Tini',
     'version': (7, 0, 0),
     'blender': (3, 5, 0),
@@ -72,7 +72,7 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
     result = subprocess.run([sys.executable, '-m', 'pip', 'install', package_name, '-t', get_dependencies_path()], 
                             text=True, capture_output=True)
     if result.returncode != 0 :
-        raise Exception(f'Dependency install issue : {result.stdout}') 
+        raise Exception(f'Dependency install issue : {result}') 
 
     # The installation succeeded, attempt to import the module again
     import_module(module_name, global_name)
