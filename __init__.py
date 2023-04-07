@@ -2,11 +2,11 @@ bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal maps from image textures',
     'author': 'Hugo Tini',
-    'version': (6, 0, 0),
-    'blender': (3, 3, 4),
+    'version': (7, 0, 0),
+    'blender': (3, 5, 0),
     'location': 'Node Editor > DeepBump',
     'category': 'Material',
-    'warning': 'Requires installation of dependencies',
+    'warning': 'Make sure dependencies are installed in the preferences panel below',
     'doc_url': 'https://github.com/HugoTini/DeepBump/blob/master/readme.md'
 }
 
@@ -19,11 +19,20 @@ import subprocess
 import sys
 import importlib
 from collections import namedtuple
+import addon_utils
 
 
 # ------------------------------------------------------------------------
 #    Dependencies management utils
 # ------------------------------------------------------------------------
+
+
+def get_dependencies_path():
+    # Dependencies to be installed in same folder as addon
+    for mod in addon_utils.modules():
+        if mod.bl_info['name'] == "DeepBump":
+            return os.path.dirname(mod.__file__)
+    return None
 
 
 # Python dependencies management helpers from :
@@ -35,6 +44,7 @@ dependencies_installed = False
 
 
 def import_module(module_name, global_name=None, reload=True):
+    sys.path.append(get_dependencies_path())
     if global_name is None:
         global_name = module_name
     if global_name in globals():
@@ -58,10 +68,12 @@ def install_and_import_module(module_name, package_name=None, global_name=None):
         package_name = module_name
     if global_name is None:
         global_name = module_name
-    # Create a copy of the environment variables and modify them for the subprocess call
-    environ_copy = dict(os.environ)
-    environ_copy['PYTHONNOUSERSITE'] = '1'
-    subprocess.run([sys.executable, '-m', 'pip', 'install', package_name], check=True, env=environ_copy)
+    # Install dependency with pip in the addon folder
+    result = subprocess.run([sys.executable, '-m', 'pip', 'install', package_name, '-t', get_dependencies_path()], 
+                            text=True, capture_output=True)
+    if result.returncode != 0 :
+        raise Exception(f'Dependency install issue : {result.stdout}') 
+
     # The installation succeeded, attempt to import the module again
     import_module(module_name, global_name)
 
@@ -102,7 +114,6 @@ class DeepBumpProperties(PropertyGroup):
                ('LARGEST', 'Largest', 'Largest blur radius')],
         default='SMALL'
     )
-
 
 
 # ------------------------------------------------------------------------
@@ -338,7 +349,7 @@ class DEEPBUMP_OT_install_dependencies(bpy.types.Operator):
                 install_and_import_module(module_name=dependency.module,
                                           package_name=dependency.package,
                                           global_name=dependency.name)
-        except (subprocess.CalledProcessError, ImportError) as err:
+        except BaseException as err:
             self.report({'ERROR'}, str(err))
             return {'CANCELLED'}
 
@@ -424,6 +435,7 @@ class DEEPBUMP_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         if dependencies_installed :
             layout.label(text='Required dependencies are installed', icon='CHECKMARK')
+            layout.label(text=f'(Dependencies path : {get_dependencies_path()})')
         else :
             layout.label(text='Installing dependencies requires internet and might take a few minutes', 
                          icon='INFO')
