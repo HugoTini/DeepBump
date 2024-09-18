@@ -181,7 +181,10 @@ def tiles_merge(tiles, stride_size, img_size, paddings):
         for w in range(0, w_range):
             h_from, h_to = h*stride_h, h*stride_h + tile_h
             w_from, w_to = w*stride_w, w*stride_w + tile_w
-            merged[:, h_from:h_to, w_from:w_to] += tiles[idx]*mask
+            merged[:, h_from:h_to, w_from:w_to] += tiles[0]*mask
+            # remove data, rather than shift on to save memory
+            tiles = tiles[1:,:,:,:]
+            print(str(idx+1) + " of " + str(h_range*w_range))
             idx += 1
 
     return merged[:, pad_top:-pad_bottom, pad_left:-pad_right]
