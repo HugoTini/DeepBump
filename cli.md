@@ -6,7 +6,7 @@
 
 2) Install the required dependencies :
 
-        pip install numpy onnxruntime imageio
+        pip install numpy onnxruntime==1.21.0 imageio
 
 # Usage
 
@@ -29,3 +29,11 @@ See `python3 cli.py -h` for a list of possible arguments. Some examples :
         python3 cli.py normals.png curvature.png normals_to_curvature
 
         python3 cli.py normals.png curvature.png normals_to_curvature --normals_to_curvature-blur_radius SMALLEST
+
+**Low resolution → High resolution** :
+
+        python3 cli.py lowres.png highres.png lowres_to_highres
+
+        python3 cli.py lowres.png highres.png lowres_to_highres --lowres_to_highres-scale_factor x2
+
+Add `--verbose` to print progress.
