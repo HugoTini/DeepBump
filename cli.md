@@ -6,7 +6,7 @@
 
 2) Install the required dependencies :
 
-        pip install numpy onnxruntime==1.21.0 imageio
+        pip install numpy onnxruntime==1.15.1 imageio
 
 # Usage
 
