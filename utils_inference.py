@@ -47,14 +47,12 @@ def tiles_split(img, tile_size, stride_size):
     # extract tiles
     h_range = ((img_h-tile_h) // stride_h) + 1
     w_range = ((img_w-tile_w) // stride_w) + 1
-    tiles = np.empty([h_range*w_range, img.shape[0], tile_h, tile_w])
-    idx = 0
+    tiles = []
     for h in range(0, h_range):
         for w in range(0, w_range):
             h_from, h_to = h*stride_h, h*stride_h + tile_h
             w_from, w_to = w*stride_w, w*stride_w + tile_w
-            tiles[idx] = img[:, h_from:h_to, w_from:w_to]
-            idx += 1
+            tiles.append(img[:, h_from:h_to, w_from:w_to])
 
     return tiles, (pad_left, pad_right, pad_top, pad_bottom)
 
@@ -64,17 +62,16 @@ def tiles_infer(tiles, ort_session, progress_callback=None):
     arguments : current tile idx and total tiles amount (used to show progress on 
     cursor in Blender).'''
 
-    out_channels = 3  # normal map RGB channels
-    tiles_nb = tiles.shape[0]
-    pred_tiles = np.empty(
-        (tiles_nb, out_channels, tiles.shape[2], tiles.shape[3]))
+    pred_tiles = []
+    tiles_nb = len(tiles)
+    if progress_callback is not None:
+        progress_callback(0, tiles_nb)
 
     for i in range(tiles_nb):
-        if progress_callback != None:
+        if progress_callback is not None:
             progress_callback(i+1, tiles_nb)
-        pred_tiles[i] = ort_session.run(None,
-                                        {'input': tiles[i:i+1].astype(np.float32)})[0]
-
+        pred = ort_session.run(None, {'input': tiles[i:i+1]})[0][0]
+        pred_tiles.append(pred)
     return pred_tiles
 
 
@@ -176,13 +173,12 @@ def tiles_merge(tiles, stride_size, img_size, paddings):
     h_range = ((height-tile_h) // stride_h) + 1
     w_range = ((width-tile_w) // stride_w) + 1
 
-    idx = 0
     for h in range(0, h_range):
         for w in range(0, w_range):
             h_from, h_to = h*stride_h, h*stride_h + tile_h
             w_from, w_to = w*stride_w, w*stride_w + tile_w
-            merged[:, h_from:h_to, w_from:w_to] += tiles[idx]*mask
-            idx += 1
+            merged[:, h_from:h_to, w_from:w_to] += tiles[0]*mask
+            del tiles[0]
 
     return merged[:, pad_top:-pad_bottom, pad_left:-pad_right]
 

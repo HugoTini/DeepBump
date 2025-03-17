@@ -2,8 +2,8 @@ bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal & height maps from image textures',
     'author': 'Hugo Tini',
-    'version': (7, 0, 0),
-    'blender': (3, 5, 0),
+    'version': (8, 0, 0),
+    'blender': (4, 3, 2),
     'location': 'Node Editor > DeepBump',
     'category': 'Material',
     'warning': 'Make sure dependencies are installed in the preferences panel below',
@@ -31,20 +31,27 @@ def get_dependencies_path():
     # Dependencies to be installed in same folder as addon
     for mod in addon_utils.modules():
         if mod.bl_info['name'] == "DeepBump":
-            return os.path.dirname(mod.__file__)
+            path = os.path.join(os.path.dirname(mod.__file__), "dependencies")
+            if not os.path.exists(path):
+                os.makedirs(path)
+            return path
     return None
 
 
 # Python dependencies management helpers from :
 # https://github.com/robertguetzkow/blender-python-examples/tree/master/add_ons/install_dependencies
 Dependency = namedtuple('Dependency', ['module', 'package', 'name'])
-dependencies = (Dependency(module='onnxruntime', package=None, name='ort'),
+dependencies = (Dependency(module='onnxruntime', package='onnxruntime==1.15.1', name='ort'),
                 Dependency(module='numpy', package=None, name='np'))
 dependencies_installed = False
 
 
 def import_module(module_name, global_name=None, reload=True):
-    sys.path.append(get_dependencies_path())
+    # Add addon dependencies path
+    deps_path = get_dependencies_path()
+    if deps_path not in sys.path :
+        sys.path.append(get_dependencies_path())
+    # Import module
     if global_name is None:
         global_name = module_name
     if global_name in globals():
@@ -113,6 +120,15 @@ class DeepBumpProperties(PropertyGroup):
                ('LARGER', 'Larger', 'Larger blur radius'),
                ('LARGEST', 'Largest', 'Largest blur radius')],
         default='SMALL'
+    )
+
+    # Lowres -> Highres panel props
+    lowrestohighres_scale_factor_enum: EnumProperty(
+        name='Scale factor',
+        description='Upscale factor',
+        items=[('x2', 'x2', 'Upscale by a factor of 2'),
+               ('x4', 'x4', 'Upscale by a factor of 4')],
+        default='x4'
     )
 
 
@@ -331,6 +347,78 @@ class DEEPBUMP_OT_NormalsToCurvatureOperator(Operator):
         return {'FINISHED'}
 
 
+class DEEPBUMP_OT_LowresToHighresOperator(Operator):
+    bl_idname = 'deepbump.lowrestohighres'
+    bl_label = 'DeepBump Low Res → High Res'
+    bl_description = bl_label
+    
+    progress_started = False
+
+    @classmethod
+    def poll(self, context):
+        if context.active_node is not None :
+            selected_node_type = context.active_node.bl_idname
+            return (context.area.type == 'NODE_EDITOR') and (selected_node_type == 'ShaderNodeTexImage')
+        return False
+
+    def progress_print(self, current, total):
+        wm = bpy.context.window_manager
+        if self.progress_started:
+            wm.progress_update(current)
+            print(f'DeepBump Low Res → High Res : {current}/{total}')
+        else:
+            wm.progress_begin(0, total)
+            self.progress_started = True
+
+    def execute(self, context):
+         # Get input image from selected node
+        input_node = context.active_node
+        input_bl_img = input_node.image
+        if input_bl_img is None:
+            self.report(
+                {'WARNING'}, 'Selected image node must have an image assigned to it.')
+            return {'CANCELLED'}
+
+        # Convert image to numpy C,H,W array
+        input_img = utils.bl_image_to_np(input_bl_img)
+
+        # Compute upscaled image
+        self.progress_started = False
+        SCALE_FACTOR = context.scene.deep_bump_tool.lowrestohighres_scale_factor_enum
+        output_img = module_lowres_to_highres.apply(input_img, SCALE_FACTOR, self.progress_print)
+
+        # Create new image datablock
+        input_img_name = os.path.splitext(input_bl_img.name)
+        output_img_name = input_img_name[0] + '_highres' + input_img_name[1]
+        upscale_factor = int(SCALE_FACTOR[1:])
+        output_bl_img = bpy.data.images.new(
+            output_img_name, width=input_bl_img.size[0] * upscale_factor, 
+            height=input_bl_img.size[1] * upscale_factor)
+        output_bl_img.colorspace_settings.name = input_bl_img.colorspace_settings.name
+
+        # Convert numpy C,H,W array back to blender image pixels
+        output_bl_img.pixels = utils.np_to_bl_pixels(output_img)
+
+        # Create new node for the upscaled image
+        output_node = context.material.node_tree.nodes.new(
+            type='ShaderNodeTexImage')
+        output_node.location = input_node.location
+        output_node.location[1] -= input_node.width*1.2
+        output_node.image = output_bl_img
+
+         # If input image was linked to a BSDF, replace link to upscaled image
+        if input_node.outputs['Color'].is_linked:
+            if len(input_node.outputs['Color'].links) == 1:
+                to_node = input_node.outputs['Color'].links[0].to_node
+                if to_node.bl_idname == 'ShaderNodeBsdfPrincipled':
+                    links = context.material.node_tree.links
+                    links.new(
+                        output_node.outputs['Color'], to_node.inputs['Base Color'])
+
+        print('DeepBump Low Res → High Res : done')
+        return {'FINISHED'}
+
+
 class DEEPBUMP_OT_install_dependencies(bpy.types.Operator):
     bl_idname = 'deepbump.install_dependencies'
     bl_label = 'Install dependencies'
@@ -427,6 +515,26 @@ class DEEPBUMP_PT_NormalsToCurvaturePanel(Panel):
         row.prop(deep_bump_tool, 'normalstocurvature_blur_radius_enum', text='')
         layout.operator('deepbump.normalstocurvature', text='Generate Curvature Map')
 
+class DEEPBUMP_PT_LowresToHighresPanel(Panel):
+    bl_idname = 'DEEPBUMP_PT_LowresToHighresPanel'
+    bl_label = 'Low Res → High Res'
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = 'DeepBump'
+    bl_context = 'objectmode'
+
+    @classmethod
+    def poll(self, context):
+        return context.object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        deep_bump_tool = context.scene.deep_bump_tool
+        row = layout.row()
+        row.label(text='Scale factor')
+        row.prop(deep_bump_tool, 'lowrestohighres_scale_factor_enum', text='')
+        layout.operator('deepbump.lowrestohighres', text='Upscale')
+
 
 class DEEPBUMP_preferences(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -459,6 +567,9 @@ classes = (
     # Normals -> Curvature operator & panel
     DEEPBUMP_OT_NormalsToCurvatureOperator,
     DEEPBUMP_PT_NormalsToCurvaturePanel,
+    # Low res -> High res operator & panel
+    DEEPBUMP_OT_LowresToHighresOperator,
+    DEEPBUMP_PT_LowresToHighresPanel
 )
 # Classes for downloading & installing dependencies
 preference_classes = (
@@ -493,9 +604,8 @@ def register_functionality():
     from . import module_color_to_normals
     from . import module_normals_to_height
     from . import module_normals_to_curvature
+    from . import module_lowres_to_highres
     from . import utils
-    # Disable MS telemetry
-    ort.disable_telemetry_events()
 
 
 def unregister():
@@ -506,7 +616,7 @@ def unregister():
         for cls in classes:
             bpy.utils.unregister_class(cls)
             
-    del bpy.types.Scene.deep_bump_tool
+        del bpy.types.Scene.deep_bump_tool
 
 
 if __name__ == '__main__':

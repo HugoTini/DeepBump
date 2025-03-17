@@ -15,7 +15,7 @@ def apply(color_img, overlap, progress_callback):
     in C,H,W format (with C as RGB). 'overlap' must be one of 'SMALL', 'MEDIUM', 'LARGE'."""
 
     # Remove alpha & convert to grayscale
-    img = np.mean(color_img[0:3], axis=0, keepdims=True)
+    img = np.mean(color_img[0:3], axis=0, keepdims=True).astype(np.float32)
 
     # Split image in tiles
     print("DeepBump Color → Normals : tilling")
@@ -33,7 +33,9 @@ def apply(color_img, overlap, progress_callback):
     # Load model
     print("DeepBump Color → Normals : loading model")
     addon_path = str(pathlib.Path(__file__).parent.absolute())
-    ort_session = ort.InferenceSession(addon_path + "/deepbump256.onnx")
+    ort_session = ort.InferenceSession(
+        addon_path + "/deepbump256.onnx", providers=["CPUExecutionProvider"]
+    )
 
     # Predict normal map for each tile
     print("DeepBump Color → Normals : generating")
