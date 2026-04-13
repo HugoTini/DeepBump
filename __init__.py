@@ -2,7 +2,7 @@ bl_info = {
     'name': 'DeepBump',
     'description': 'Generates normal & height maps from image textures',
     'author': 'Hugo Tini',
-    'version': (8, 0, 0),
+    'version': (8, 1, 0),
     'blender': (4, 3, 2),
     'location': 'Node Editor > DeepBump',
     'category': 'Material',
@@ -41,7 +41,7 @@ def get_dependencies_path():
 # Python dependencies management helpers from :
 # https://github.com/robertguetzkow/blender-python-examples/tree/master/add_ons/install_dependencies
 Dependency = namedtuple('Dependency', ['module', 'package', 'name'])
-dependencies = (Dependency(module='onnxruntime', package='onnxruntime==1.15.1', name='ort'),
+dependencies = (Dependency(module='onnxruntime', package='onnxruntime==1.24.4', name='ort'),
                 Dependency(module='numpy', package=None, name='np'))
 dependencies_installed = False
 
