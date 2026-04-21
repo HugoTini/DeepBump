@@ -41,16 +41,47 @@ def get_dependencies_path():
 # Python dependencies management helpers from :
 # https://github.com/robertguetzkow/blender-python-examples/tree/master/add_ons/install_dependencies
 Dependency = namedtuple('Dependency', ['module', 'package', 'name'])
-dependencies = (Dependency(module='onnxruntime', package='onnxruntime==1.15.1', name='ort'),
+
+# onnxruntime 1.19+ requires the VS2022 C++ runtime (vcredist 2022).
+# onnxruntime 1.18.x uses the VS2019 runtime which is far more common.
+# Python 3.13 (Blender 5.x) requires at least 1.19, so we pick the minimum
+# version that covers the running Python while staying on the older runtime
+# wherever possible.
+def _ort_package():
+    if sys.version_info >= (3, 13):
+        return 'onnxruntime==1.21.0'   # Python 3.13+ (Blender 5.x)
+    return 'onnxruntime==1.18.1'       # Python 3.11/3.12 (Blender 4.x)
+
+dependencies = (Dependency(module='onnxruntime', package=_ort_package(), name='ort'),
                 Dependency(module='numpy', package=None, name='np'))
 dependencies_installed = False
 
 
 def import_module(module_name, global_name=None, reload=True):
-    # Add addon dependencies path
+    # Add addon dependencies path at the FRONT so it takes priority
     deps_path = get_dependencies_path()
-    if deps_path not in sys.path :
-        sys.path.append(get_dependencies_path())
+    if deps_path not in sys.path:
+        sys.path.insert(0, deps_path)
+    # On Windows (Python 3.8+), native DLLs in package subdirectories are no
+    # longer found automatically. Use both os.add_dll_directory (Python 3.8+)
+    # and PATH manipulation (legacy fallback) to cover all Blender builds.
+    if sys.platform == 'win32':
+        dll_dirs = [deps_path, os.path.join(deps_path, 'onnxruntime', 'capi')]
+        for dll_dir in dll_dirs:
+            if os.path.isdir(dll_dir):
+                if hasattr(os, 'add_dll_directory'):
+                    os.add_dll_directory(dll_dir)
+                env_path = os.environ.get('PATH', '')
+                if dll_dir not in env_path:
+                    os.environ['PATH'] = dll_dir + os.pathsep + env_path
+    # Clear ALL stale/failed imports for this module (including submodules like
+    # onnxruntime.capi, onnxruntime.capi._pybind_state) so a clean attempt is
+    # made after dependencies are installed.
+    if global_name not in globals():
+        stale = [k for k in list(sys.modules)
+                 if k == module_name or k.startswith(module_name + '.')]
+        for k in stale:
+            del sys.modules[k]
     # Import module
     if global_name is None:
         global_name = module_name
